@@ -57,6 +57,7 @@ describe('GET /hello?name=<params>', () => {
       url: '/hello',
       query: { name: 'Bob' },
     })
+    // GET /hello?name=Bob
 
     assert.deepStrictEqual(response.json(), { message: 'Hello Bob' })
   })

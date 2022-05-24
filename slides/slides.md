@@ -639,7 +639,7 @@ layout: intro
 
 ## Query string
 
-`GET /hello?name=bob@age=42`
+`GET /hello?name=bob&age=42`
 
 ```ts {all|2|3|5-6|8-9|13|14-15|all}
 const helloSchema = {
