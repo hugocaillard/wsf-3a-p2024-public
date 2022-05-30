@@ -839,3 +839,229 @@ layout: intro
 - Pouvoir supprimer ses propres messages
 - "Réactions" à un message (emoji)
 - Système de modération (ex: repérer et filtrer les messages à caractère haineux)
+
+---
+layout: intro
+---
+
+# Authentifier un utilisateur
+
+Création de compte et authentification.
+
+---
+
+## 🙈 Bcrypt
+
+Bcrypt est une fonction de hachage (`hashing`). Au même tite que :
+- MD5, non recommandé, quel que soit l'usage car dépassé
+- SHA256, non recommandé pour les mot de passe car trop rapide
+En effet, dans le contexte de hachage de mot de passe, une fonction de hachage trop rapide est exposée au brute-force.
+
+```
+password   -> hash
+helloworld -> $2y$10$itzhi9Zl1/cCDkWnb8251eEcJgCZ2pIABFJvQ3lHAW8laau3pNQwC
+helloWorld -> $2y$10$kVto5qRWn5F/NsQVQm09.ONvHp39tcHT0dxwd3d1vWGjKBnhi6j4.
+```
+
+Il est impossible de retrouver le mot de passe à partir du hash. Un petit changement mène a des résultat complétement différent.
+De plus, bcrypt à recours au "salage" (`salt`) qui consiste à ajouter du texte afin que le hachage d'un même mot de passe ne mène pas au même résultat.
+
+---
+
+## 🙈 Bcrypt - Utilisation avec Node.js
+
+Comme toujours, nous commençons avec un npm install
+```sh
+$ npm install bcrypt
+```
+
+Pour hacher un mot de passe : 
+
+```js
+import bcrypt from 'bcrypt'
+//...
+  await supabase
+    .from('users')
+    .insert({
+      email: body.email.toLowerCase(),
+      password: await bcrypt.hash(body.password, 10) // ✅
+    })
+    .single()
+```
+
+---
+
+## 🙈 Bcrypt - Comparer le hash au vrai mot de passe
+
+Lorsqu'on veut authentifier un utilisateur, nous allons devoir comparer le mot de passe qu'il rentre en clair avec le hash que nous avons sauvegardé en DB.
+Dans la route `POST /signin :
+
+```js
+  // retrouver le hash
+  const user = await supabase
+    .from('users')
+    .select('id, password')
+    .eq('email', body.email.toLowerCase())
+    .single()
+
+  // todo : vérifier que l'utilisateur existe bien
+  // bcrypt.compare(mot-de-passe-en-clair, hash)
+  const passwordIsValid = await bcrypt.compare(body.password, user.data.password)
+```
+
+---
+
+## 🔑 JSON Web Token
+
+Maintenant que nous avons authentifié l'utilisateur (ie: nous l'avons retrouvé avec la combinaison email / mot de passe), nous pouvons lui fournir une "clé" qui permettra de l'identifier lorsqu'il requêtera des routes protégées.
+
+Il existe de nombreuses façons d'y arriver, nous allons nous intéresser au système de JWT.
+Le système de JWT permet d'encapsuler des informations relatives à l'utilisateur dans un token et de les signer avec une clé privée, permettant de s'assurer que c'est bien notr serveur qui a fourni le token.
+
+Bien sûr, il existe un package :
+```sh
+$ npm install jsonwebtoken
+```
+
+---
+
+## 🔑 JWT - Créer un token avec une clé secrète
+
+```js
+jsonwebtoken.sign({ id: user.data.id }, '<secret-key>', options, (err, jwt) => {
+  // renvoyer le JWT à l'utilisateur s'il n'y a pas d'erreur
+})
+```
+
+En premier argument (le `payload`) nous pouvons passer une chaîne de caractère ou bien un objet, ici nous passons simplement un object à l'ID de l'utilisateur.
+
+Le deuxième argument, la "secret key", doit être privé et difficile à deviner, comme un mot de passe.
+- Générer plusieurs clés avec un générateur de mot de passe, une par environnment
+- Les enregistrer dans les fichiers `.env.*`
+
+---
+
+## 🔑 JWT - Créer un token qui expire au bout d'un certain temps
+
+```js
+jsonwebtoken.sign({ id: user.data.id }, '<secret-key>', { expiresIn: '24h' }, (err, jwt) => {
+  // renvoyer le JWT à l'utilisateur s'il n'y a pas d'erreur
+})
+```
+
+En spécifiant l'option `expiresIn` permet de préciser pendant combien de temps le token est valide. En général, il est déconseillé de générer un token qui n'expire jamais, plus la durée est courte, plus le token est sécurisé.
+
+Cette option repose sur [`vercel/ms`](https://github.com/vercel/ms) qui permet de traduire une chaîne de caractère exprimant une durée en millisecondes.
+
+---
+
+## 👉 Convertir une méthode avec callback en promise
+
+Historiquement, JavaScript utilisait beaucoup le principe de "callback", pour gérer les fonctions asynchrones. Par exemple, pour lire un fichir en Node.js
+
+```js
+import { readFile } from 'fs'
+
+function read() {
+  readFile('/path/file', (err, data) => {
+    if (err) throw err
+    console.log(data)
+  })
+}
+```
+
+On retrouve généralement des fonctions qui acceptent un callback dont le premier argument est une erreur (ou `null`) et le second est le résutat (s'il n'y a pas d'erreur).
+
+---
+
+## 👉 Convertir une méthode avec callback en promise
+
+Désormais, Node.js fourni beaucoup de ses méthodes asynchrones sous forme de Promises.
+
+```js
+import { readFile } from 'fs/promises' // 👈
+
+async function read() {
+  try {
+    const data =  await readFile('/path/file')
+  } catch (err) {
+    throw err
+  }
+}
+```
+
+Ainsi qu'une méthode pour transformer des fonctions avec callback en promise.
+```js
+import { promisify } from 'utils'
+import { readFile } from 'fs'
+
+// répliquer l'utilisation de 'fs/promises'
+const readFilePromise = promisify(readFile)
+```
+
+---
+
+## 👉 Convertir une méthode avec callback en promise
+
+Malheureusement, `promisify` n'est pas magique et ne fonctionne pas toujours.
+Dans notre cas, `jwt.sign` peut s'appeler de deux façons différentes :
+
+```js
+jwt.sign(payload, key, callbackFn)
+jwt.sign(payload, key, options, callbackFn)
+```
+Parce que l'arguments "options" est facultatif, le callback peut être le 3ème ou 4ème argument. Ainsi, `promisify` ne sera pas capable d le gérer correctement.
+
+Nous allons donc transformer nous même cette méthode en promise avec `new Promise()`.
+
+---
+
+## 👉 Convertir une méthode avec callback en promise
+
+```js
+function getJWT(payload, options) {
+  return new Promise((resolve, reject) => {
+    jsonwebtoken.sign(payload, process.env.JWT_SECRET, options, (err, jwt) => {
+      if (err) return reject(err)
+      return resolve(jwt)
+    })
+  })
+}
+```
+
+```js
+async function signin() {
+  // ...
+  const passwordIsValid = await bcrypt.compare(
+    body.password,
+    user.data.password,
+  )
+  // ...
+  const jwt = await getJWT({ id: user.data.id }, { expiresIn: '24h' })
+  // ...
+}
+```
+
+---
+
+## 🔑 JWT - Utilisation
+
+Lorsque le JWT est renvoyé au client (qui appelle notre API), celui-ci doit le garder en mémoire (souvent dans le localStorage si l'appel se fait depuis une application Web). Et renvoyé à l'API à chaques requêtes.
+
+Par convention le JWT est envoyé dans le header `authorization`.
+
+Ainsi, le token peut-être récupéré dans `req.headers.authorization`.
+
+---
+
+## 🔑 JWT - Utilisation
+
+Le module `jsonwebtoken` expose une méthode pour verifier si le token est valide :
+
+```js
+jsonwebtoken.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+  /* ... */
+})
+```
+
+On retrouve le pattern de callback, à vous de le transformer en promise.
